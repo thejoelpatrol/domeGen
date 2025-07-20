@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 THREADS = 6
 
@@ -31,8 +32,45 @@ def extract_samples(infile: str, intermediate: str, n_frames: int, n_threads: in
     ffmpeg.stdin.close()
     ffmpeg.wait()
 
+def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes) -> bytes:
+    tmp_dir = tempfile.gettempdir()
+    new_dir = os.path.join(tmp_dir, str(time.time()))
+    os.mkdir(new_dir)
+    tmp_tif = os.path.join(new_dir, f"full.tif")
+    magick_args = ["magick", "ppm:-", tmp_tif]
+    with subprocess.Popen(magick_args, stdin=subprocess.PIPE) as magick:
+        magick.communicate(p6 + dimensions + maxval + data)
 
-def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: int):
+    # split into 4 quadrants
+    for i, (offset_x, offset_y) in enumerate([(0,0), (2048,0), (0,2048), (2048,2048)]):
+        quarter = os.path.join(new_dir, f"q{i+1}.tif")
+        vips_cmd = f"vips crop  {tmp_tif} {quarter}  {offset_x} {offset_y} 2048 2048"
+        subprocess.check_call(vips_cmd.split())
+
+    # skew top two qudrants
+    q1 = os.path.join(new_dir, f"q1.tif")
+    q1_skew = os.path.join(new_dir, f"q1_distort.tif")
+    q1_args = ["magick", q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
+    subprocess.check_call(q1_args)
+    q2 = os.path.join(new_dir, f"q2.tif")
+    q2_skew = os.path.join(new_dir, f"q2_distort.tif")
+    q2_args = ["magick", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
+    subprocess.check_call(q2_args)
+
+    # enblend
+    pto_file = os.path.join(new_dir, "project.pto")
+    shutil.copyfile("project.pto", pto_file)
+    hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
+    subprocess.check_call(hugin_cmd.split())
+
+    # feed the frame back into the final video
+    #read_ppm = subprocess.Popen(f"magick {os.path.join(new_dir, 'blended.tif')} ppm:-".split(), stdout=subprocess.PIPE)
+    read_ppm = subprocess.Popen(f"vips copy {os.path.join(new_dir, 'blended.tif')} .ppm".split(), stdout=subprocess.PIPE)
+    ppm, _ = read_ppm.communicate()
+    shutil.rmtree(new_dir)
+    return ppm
+
+def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: int, n_threads: int):
     if dome_intermediate:
         ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {dome_intermediate}"
         with subprocess.Popen(ffmpeg_args.split()) as p:
@@ -44,66 +82,41 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: in
 
         ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -f image2pipe -vcodec ppm pipe:1"
         ffmpeg = subprocess.Popen(ffmpeg_args.split(), stdout=subprocess.PIPE)
-        i = 0
-        while True:
-            if i == n_frames:
-                final_ffmpeg.terminate()
-                break
-            if ffmpeg.poll() is not None:
-                final_ffmpeg.terminate()
-                break
-            # save ffmpeg frame as tif
-            # i don't want ffmpeg to do this itself because it will make too many, i rate limit it by reading from it
-            p6 =  ffmpeg.stdout.readline()
-            if len(p6) == 0:
-                print("didn't get anything from ffmpeg")
-                time.sleep(0.5)
-                continue
-            dimensions = ffmpeg.stdout.readline()
-            maxval = ffmpeg.stdout.readline()
-            width, height = dimensions.split()
-            width = int(width)
-            height = int(height)
-            size = width * height * 3
-            data = ffmpeg.stdout.read(size)
 
+        with ThreadPoolExecutor(max_workers=n_threads) as thread_pool:
+            i = 0
+            while True:
+                future_results = []
+                for _ in range(n_threads):
+                    if i == n_frames:
+                        final_ffmpeg.terminate()
+                        return
+                    if ffmpeg.poll() is not None:
+                        final_ffmpeg.terminate()
+                        return
+                    # save ffmpeg frame as tif
+                    # i don't want ffmpeg to do this itself because it will make too many, i rate limit it by reading from it
+                    p6 =  ffmpeg.stdout.readline()
+                    if len(p6) == 0:
+                        print("didn't get anything from ffmpeg")
+                        time.sleep(0.5)
+                        continue
+                    dimensions = ffmpeg.stdout.readline()
+                    maxval = ffmpeg.stdout.readline()
+                    width, height = dimensions.split()
+                    width = int(width)
+                    height = int(height)
+                    size = width * height * 3
+                    data = ffmpeg.stdout.read(size)
 
-            tmp_dir = tempfile.gettempdir()
-            new_dir = os.path.join(tmp_dir, str(time.time()))
-            os.mkdir(new_dir)
-            tmp_tif = os.path.join(new_dir, f"full.tif")
-            magick_args = ["magick", "ppm:-", tmp_tif]
-            with subprocess.Popen(magick_args, stdin=subprocess.PIPE) as magick:
-                magick.communicate(p6 + dimensions + maxval + data)
+                    #ppm = process_frame(p6, dimensions, maxval, data)
+                    future_results.append(thread_pool.submit(process_frame, p6, dimensions, maxval, data))
+                    i += 1
 
-            # split into 4 quadrants
-            for i, (offset_x, offset_y) in enumerate([(0,0), (2048,0), (0,2048), (2048,2048)]):
-                quarter = os.path.join(new_dir, f"q{i+1}.tif")
-                vips_cmd = f"vips crop  {tmp_tif} {quarter}  {offset_x} {offset_y} 2048 2048"
-                subprocess.check_call(vips_cmd.split())
+                for future in future_results:
+                    ppm = future.result()
+                    final_ffmpeg.stdin.write(ppm)
 
-            # skew top two qudrants
-            q1 = os.path.join(new_dir, f"q1.tif")
-            q1_skew = os.path.join(new_dir, f"q1_distort.tif")
-            q1_args = ["magick", q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
-            subprocess.check_call(q1_args)
-            q2 = os.path.join(new_dir, f"q2.tif")
-            q2_skew = os.path.join(new_dir, f"q2_distort.tif")
-            q2_args = ["magick", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
-            subprocess.check_call(q2_args)
-
-            # enblend
-            pto_file = os.path.join(new_dir, "project.pto")
-            shutil.copyfile("project.pto", pto_file)
-            hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
-            subprocess.check_call(hugin_cmd.split())
-
-            # feed the frame back into the final video
-            read_ppm = subprocess.Popen(f"magick {os.path.join(new_dir, 'blended.tif')} ppm:-".split(), stdout=subprocess.PIPE)
-            ppm, _ = read_ppm.communicate()
-            final_ffmpeg.stdin.write(ppm)
-
-            shutil.rmtree(new_dir)
 
 
 
@@ -120,8 +133,13 @@ def main():
 
     args = parser.parse_args()
 
-    #extract_samples(args.infile, args.intermediate, args.frames, args.threads)
-    domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames)
+    start = time.time()
+
+    extract_samples(args.infile, args.intermediate, args.frames, args.threads)
+    domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames, args.threads)
+
+    end = time.time()
+    print(f"finished in {end - start} seconds")
 
 if __name__ == "__main__":
     main()
