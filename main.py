@@ -147,7 +147,7 @@ def main():
 
     start = time.time()
 
-    #extract_samples(args.infile, args.linear_intermediate, args.frames, args.threads)
+    extract_samples(args.infile, args.linear_intermediate, args.frames, args.threads)
     domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames, args.threads, args.scratch_dir)
 
     end = time.time()
