@@ -74,7 +74,7 @@ c n2 N3 x2047 y1500 X0 Y1500 t0
 c n2 N3 x2047 y2000 X0 Y2000 t0
 
 #hugin_optimizeReferenceImage 0
-#hugin_blender enblend
+#hugin_blender internal
 #hugin_remapper nona
 #hugin_enblendOptions 
 #hugin_enfuseOptions 

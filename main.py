@@ -32,7 +32,7 @@ def extract_samples(infile: str, intermediate: str, n_frames: int, n_threads: in
     ffmpeg.stdin.close()
     ffmpeg.wait()
 
-def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_dir: str) -> bytes:
+def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_dir: str, enblend: False) -> bytes:
     new_dir = os.path.join(tmp_dir, str(time.time()))
     os.mkdir(new_dir)
     tmp_tif = os.path.join(new_dir, f"full.tif")
@@ -41,7 +41,8 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
         magick.communicate(p6 + dimensions + maxval + data)
 
     # split into 4 quadrants
-    for i, (offset_x, offset_y) in enumerate([(0,0), (2048,0), (0,2048), (2048,2048)]):
+    #for i, (offset_x, offset_y) in enumerate([(0,0), (2048,0), (0,2048), (2048,2048)]):
+    for i, (offset_x, offset_y) in enumerate([(0,0), (2048,0)]):
         quarter = os.path.join(new_dir, f"q{i+1}.tif")
         vips_cmd = f"vips crop  {tmp_tif} {quarter}  {offset_x} {offset_y} 2048 2048"
         subprocess.check_call(vips_cmd.split())
@@ -51,20 +52,31 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
     q1_skew = os.path.join(new_dir, f"q1_distort.tif")
     q1_args = ["magick", q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
     subprocess.check_call(q1_args)
+
     q2 = os.path.join(new_dir, f"q2.tif")
     q2_skew = os.path.join(new_dir, f"q2_distort.tif")
     q2_args = ["magick", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
     subprocess.check_call(q2_args)
 
-    # enblend
-    pto_file = os.path.join(new_dir, "project.pto")
-    shutil.copyfile("project.pto", pto_file)
-    hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
-    subprocess.check_call(hugin_cmd.split())
+    blended_outfile = os.path.join(new_dir, 'blended.tif')
+    if enblend:
+        # enblend
+        pto_file = os.path.join(new_dir, "project.pto")
+        shutil.copyfile("project.pto", pto_file)
+        hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
+        subprocess.check_call(hugin_cmd.split())
+    else:
+        q2_masked = os.path.join(new_dir, "q2_distort_masked.tif")
+        mask = os.path.join(new_dir, "q2-mask3.tif")
+        shutil.copyfile("q2-mask3.tif", mask)
+        subprocess.check_call(f"magick {q2_skew} {mask} -alpha Off -compose CopyOpacity -composite {q2_masked}".split())
+        top_2_quadrants = os.path.join(new_dir, "q1-2.tif")
+        subprocess.check_call(f"magick {q1_skew} {q2_masked} +smush -387 {top_2_quadrants}".split())
+        subprocess.check_call(f"magick composite {top_2_quadrants} {tmp_tif} -gravity NorthWest {blended_outfile}".split())
 
     # feed the frame back into the final video
     #read_ppm = subprocess.Popen(f"magick {os.path.join(new_dir, 'blended.tif')} ppm:-".split(), stdout=subprocess.PIPE)
-    read_ppm = subprocess.Popen(f"vips copy {os.path.join(new_dir, 'blended.tif')} .ppm".split(), stdout=subprocess.PIPE)
+    read_ppm = subprocess.Popen(f"vips copy {blended_outfile} .ppm".split(), stdout=subprocess.PIPE)
     ppm, _ = read_ppm.communicate()
     shutil.rmtree(new_dir)
     return ppm
@@ -109,7 +121,7 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: in
                     data = ffmpeg.stdout.read(size)
 
                     #ppm = process_frame(p6, dimensions, maxval, data)
-                    future_results.append(thread_pool.submit(process_frame, p6, dimensions, maxval, data, scratch_dir))
+                    future_results.append(thread_pool.submit(process_frame, p6, dimensions, maxval, data, scratch_dir, False))
                     i += 1
 
                 for future in future_results:
@@ -135,7 +147,7 @@ def main():
 
     start = time.time()
 
-    extract_samples(args.infile, args.linear_intermediate, args.frames, args.threads)
+    #extract_samples(args.infile, args.linear_intermediate, args.frames, args.threads)
     domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames, args.threads, args.scratch_dir)
 
     end = time.time()
