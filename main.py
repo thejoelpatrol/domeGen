@@ -32,8 +32,7 @@ def extract_samples(infile: str, intermediate: str, n_frames: int, n_threads: in
     ffmpeg.stdin.close()
     ffmpeg.wait()
 
-def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes) -> bytes:
-    tmp_dir = tempfile.gettempdir()
+def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_dir: str) -> bytes:
     new_dir = os.path.join(tmp_dir, str(time.time()))
     os.mkdir(new_dir)
     tmp_tif = os.path.join(new_dir, f"full.tif")
@@ -70,7 +69,7 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes) -> b
     shutil.rmtree(new_dir)
     return ppm
 
-def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: int, n_threads: int):
+def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: int, n_threads: int, scratch_dir: str):
     if dome_intermediate:
         ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {dome_intermediate}"
         with subprocess.Popen(ffmpeg_args.split()) as p:
@@ -110,7 +109,7 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: in
                     data = ffmpeg.stdout.read(size)
 
                     #ppm = process_frame(p6, dimensions, maxval, data)
-                    future_results.append(thread_pool.submit(process_frame, p6, dimensions, maxval, data))
+                    future_results.append(thread_pool.submit(process_frame, p6, dimensions, maxval, data, scratch_dir))
                     i += 1
 
                 for future in future_results:
@@ -126,6 +125,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--threads", type=int, default=THREADS)
     parser.add_argument("--dome-intermediate", default=None, help="first 360 mp4 file path; if omitted, uses pipe to next step")
+    parser.add_argument("--scratch-dir", default=tempfile.gettempdir(), help="directory to save tiff frames for blending")
     parser.add_argument("infile", help="Input tiff file path")
     parser.add_argument("frames", type=int, help="number of frames to extract from tiff")
     parser.add_argument("linear_intermediate", help="Linear mp4 file path")
@@ -135,8 +135,8 @@ def main():
 
     start = time.time()
 
-    extract_samples(args.infile, args.intermediate, args.frames, args.threads)
-    domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames, args.threads)
+    extract_samples(args.infile, args.linear_intermediate, args.frames, args.threads)
+    domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames, args.threads, args.scratch_dir)
 
     end = time.time()
     print(f"finished in {end - start} seconds")
