@@ -32,9 +32,9 @@ def extract_samples(infile: str, intermediate: str, n_frames: int, n_threads: in
     ffmpeg.wait()
 
 
-def domify(intermediate: str, dome_intermediate: str, outfile: str):
+def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: int):
     if dome_intermediate:
-        ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {outfile}"
+        ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {dome_intermediate}"
         with subprocess.Popen(ffmpeg_args.split()) as p:
             print(f"domifying to {outfile}")
 
@@ -44,11 +44,21 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str):
 
         ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -f image2pipe -vcodec ppm pipe:1"
         ffmpeg = subprocess.Popen(ffmpeg_args.split(), stdout=subprocess.PIPE)
+        i = 0
         while True:
-
+            if i == n_frames:
+                final_ffmpeg.terminate()
+                break
+            if ffmpeg.poll() is not None:
+                final_ffmpeg.terminate()
+                break
             # save ffmpeg frame as tif
             # i don't want ffmpeg to do this itself because it will make too many, i rate limit it by reading from it
             p6 =  ffmpeg.stdout.readline()
+            if len(p6) == 0:
+                print("didn't get anything from ffmpeg")
+                time.sleep(0.5)
+                continue
             dimensions = ffmpeg.stdout.readline()
             maxval = ffmpeg.stdout.readline()
             width, height = dimensions.split()
@@ -56,6 +66,8 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str):
             height = int(height)
             size = width * height * 3
             data = ffmpeg.stdout.read(size)
+
+
             tmp_dir = tempfile.gettempdir()
             new_dir = os.path.join(tmp_dir, str(time.time()))
             os.mkdir(new_dir)
@@ -80,11 +92,13 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str):
             q2_args = ["magick", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
             subprocess.check_call(q2_args)
 
+            # enblend
             pto_file = os.path.join(new_dir, "project.pto")
             shutil.copyfile("project.pto", pto_file)
             hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
             subprocess.check_call(hugin_cmd.split())
 
+            # feed the frame back into the final video
             read_ppm = subprocess.Popen(f"magick {os.path.join(new_dir, 'blended.tif')} ppm:-".split(), stdout=subprocess.PIPE)
             ppm, _ = read_ppm.communicate()
             final_ffmpeg.stdin.write(ppm)
@@ -97,8 +111,6 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    #parser.add_argument("--from-macpaint", "-m", action="store_true", help="Convert from MacPaint to PNG")
-    #parser.add_argument("--to-macpaint", "-p", action="store_true", help="Convert from PNG to MacPaint")
     parser.add_argument("--threads", type=int, default=THREADS)
     parser.add_argument("--dome-intermediate", default=None, help="first 360 mp4 file path; if omitted, uses pipe to next step")
     parser.add_argument("infile", help="Input tiff file path")
@@ -109,7 +121,7 @@ def main():
     args = parser.parse_args()
 
     #extract_samples(args.infile, args.intermediate, args.frames, args.threads)
-    domify(args.linear_intermediate, args.dome_intermediate, args.outfile)
+    domify(args.linear_intermediate, args.dome_intermediate, args.outfile, args.frames)
 
 if __name__ == "__main__":
     main()
