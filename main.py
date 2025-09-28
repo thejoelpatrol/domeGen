@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 THREADS = 6
 
 def extract_samples(infile: str, intermediate: str, n_frames: int, n_threads: int):
-    ffmpeg_args = ["ffmpeg", "-y", "-i",  "pipe:0","-c:v", "libx264", "-r", "30", "-crf", "18", "-pix_fmt", "yuv420p", intermediate]
+    ffmpeg_args = ["ffmpeg", "-y", "-framerate", "30", "-i",  "pipe:0", "-c:v", "libx264", "-r", "30", "-crf", "18", "-pix_fmt", "yuv420p", intermediate]
     ffmpeg = subprocess.Popen(ffmpeg_args, stdin=subprocess.PIPE)
 
     i = 0
@@ -36,7 +36,7 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
     new_dir = os.path.join(tmp_dir, str(time.time()))
     os.mkdir(new_dir)
     tmp_tif = os.path.join(new_dir, f"full.tif")
-    magick_args = ["magick", "ppm:-", tmp_tif]
+    magick_args = ["convert", "ppm:-", tmp_tif]
     with subprocess.Popen(magick_args, stdin=subprocess.PIPE) as magick:
         magick.communicate(p6 + dimensions + maxval + data)
 
@@ -50,13 +50,13 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
     # skew top two qudrants
     q1 = os.path.join(new_dir, f"q1.tif")
     q1_skew = os.path.join(new_dir, f"q1_distort.tif")
-    q1_args = ["magick", q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
-    subprocess.check_call(q1_args)
+    q1_args = ["convert", q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
+    subprocess.run(q1_args)
 
     q2 = os.path.join(new_dir, f"q2.tif")
     q2_skew = os.path.join(new_dir, f"q2_distort.tif")
-    q2_args = ["magick", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
-    subprocess.check_call(q2_args)
+    q2_args = ["convert", q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
+    subprocess.run(q2_args)
 
     blended_outfile = os.path.join(new_dir, 'blended.tif')
     if enblend:
@@ -69,10 +69,10 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
         q2_masked = os.path.join(new_dir, "q2_distort_masked.tif")
         mask = os.path.join(new_dir, "q2-mask3.tif")
         shutil.copyfile("q2-mask3.tif", mask)
-        subprocess.check_call(f"magick {q2_skew} {mask} -alpha Off -compose CopyOpacity -composite {q2_masked}".split())
+        subprocess.check_call(f"convert {q2_skew} {mask} -alpha Off -compose CopyOpacity -composite {q2_masked}".split())
         top_2_quadrants = os.path.join(new_dir, "q1-2.tif")
-        subprocess.check_call(f"magick {q1_skew} {q2_masked} +smush -387 {top_2_quadrants}".split())
-        subprocess.check_call(f"magick composite {top_2_quadrants} {tmp_tif} -gravity NorthWest {blended_outfile}".split())
+        subprocess.check_call(f"convert {q1_skew} {q2_masked} +smush -387 {top_2_quadrants}".split())
+        subprocess.check_call(f"composite {top_2_quadrants} {tmp_tif} -gravity NorthWest {blended_outfile}".split())
 
     # feed the frame back into the final video
     #read_ppm = subprocess.Popen(f"magick {os.path.join(new_dir, 'blended.tif')} ppm:-".split(), stdout=subprocess.PIPE)
@@ -88,9 +88,11 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: in
             print(f"domifying to {outfile}")
 
     else:
-        final_ffmpeg_args = f"ffmpeg -i pipe:0 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {outfile}"
+        # this one makes the blended output
+        final_ffmpeg_args = f"ffmpeg -framerate 30 -i pipe:0 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {outfile}"
         final_ffmpeg = subprocess.Popen(final_ffmpeg_args.split(), stdin=subprocess.PIPE)
 
+        # this one makes the initial domification
         ffmpeg_args = f"ffmpeg -i {intermediate} -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -f image2pipe -vcodec ppm pipe:1"
         ffmpeg = subprocess.Popen(ffmpeg_args.split(), stdout=subprocess.PIPE)
 
@@ -136,7 +138,7 @@ def domify(intermediate: str, dome_intermediate: str, outfile: str, n_frames: in
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--threads", type=int, default=THREADS)
-    parser.add_argument("--dome-intermediate", default=None, help="first 360 mp4 file path; if omitted, uses pipe to next step")
+    parser.add_argument("--dome-intermediate", default=None, help="first 360 mp4 file path; if omitted, uses pipe to next step (deprecated, do not use)")
     parser.add_argument("--scratch-dir", default=tempfile.gettempdir(), help="directory to save tiff frames for blending")
     parser.add_argument("infile", help="Input tiff file path")
     parser.add_argument("frames", type=int, help="number of frames to extract from tiff")
