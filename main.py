@@ -59,12 +59,12 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
     # skew top two qudrants
     q1 = os.path.join(new_dir, f"q1.tif")
     q1_skew = os.path.join(new_dir, f"q1_distort.tif")
-    q1_args = [magick_convert, q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q1_skew]
+    q1_args = [magick_convert, q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", "-channel", "A", "-threshold", "0", "+channel", q1_skew]
     subprocess.run(q1_args)
 
     q2 = os.path.join(new_dir, f"q2.tif")
     q2_skew = os.path.join(new_dir, f"q2_distort.tif")
-    q2_args = [magick_convert, q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", q2_skew]
+    q2_args = [magick_convert, q2, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,-200,0 \n2047,0,2047,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", "-channel", "A", "-threshold", "0", "+channel", q2_skew]
     subprocess.run(q2_args)
 
     blended_outfile = os.path.join(new_dir, 'blended.tif')
@@ -82,7 +82,7 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
         subprocess.check_call(f"{magick_convert} {q2_skew} {mask} -alpha Off -compose CopyOpacity -composite {q2_masked}".split())
         top_2_quadrants = os.path.join(new_dir, "q1-2.tif")
         subprocess.check_call(f"{magick_convert} {q1_skew} {q2_masked} +smush -387 {top_2_quadrants}".split())
-        subprocess.check_call(f"{magick_composite} {top_2_quadrants} {tmp_tif} -gravity NorthWest {blended_outfile}".split())
+        subprocess.check_call(f"{magick_composite} {top_2_quadrants} {tmp_tif} -gravity SouthWest -rotate 180 {blended_outfile}".split())
 
     # feed the frame back into the final video
     read_ppm = subprocess.Popen(f"vips copy {blended_outfile} .ppm".split(), stdout=subprocess.PIPE)
