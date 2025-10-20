@@ -20,6 +20,6 @@ done
 
 echo ""
 
-ffmpeg -r 30 -i ${SCRATCH_DIR}/frame_%05d.png -r 30 -c:v libx264 -crf 18 -pix_fmt yuv420p ${SCRATCH_DIR}/white-circle.mp4
+ffmpeg -y -r 30 -i ${SCRATCH_DIR}/frame_%05d.png -r 30 -c:v libx265 -x265-params crf=20 -pix_fmt yuv420p -tag:v hvc1 ${SCRATCH_DIR}/white-circle.mp4
 
 rm ${SCRATCH_DIR}/frame_*.png &

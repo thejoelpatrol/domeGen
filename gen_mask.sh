@@ -1,20 +1,25 @@
 #!/bin/bash
 set -e
-#magick -size 4096x4096 canvas:black black.png
-#ffmpeg -loop 1 -i black.png -t 480 -r 30  black.mp4
 
-SCRATCH_DIR=/tmp
+OUTFILE=${1}
+MAIN_SECTION_SECONDS=${2}
+SCRATCH_DIR=${3}
 #SCRATCH_DIR=/Volumes/RAM_Disk_16GB
-MAIN_SECTION_SECONDS=410
+FADE_SECONDS=35
+FADE_FRAMES=$((FADE_SECONDS*30))
+TOTAL_LEN=$((2*FADE_SECONDS+MAIN_SECTION_SECONDS))
 
-./gen_circle_black.sh 1040 ${SCRATCH_DIR}
-./gen_circle_white.sh  1040 ${SCRATCH_DIR}
+./gen_circle_black.sh ${FADE_FRAMES} ${SCRATCH_DIR}
+./gen_circle_white.sh  ${FADE_FRAMES} ${SCRATCH_DIR}
 
 magick -size 4096x4096 canvas:white ${SCRATCH_DIR}/white.png
-ffmpeg -loop 1 -i ${SCRATCH_DIR}/white.png -t ${MAIN_SECTION_SECONDS} -r 30 -c:v libx264 -crf 18 -pix_fmt yuv420p ${SCRATCH_DIR}/white.mp4
+ffmpeg -y -loop 1 -i ${SCRATCH_DIR}/white.png -t ${MAIN_SECTION_SECONDS} -r 30 -c:v libx265 -x265-params crf=20 -pix_fmt yuv420p -tag:v hvc1 "${SCRATCH_DIR}/white.mp4"
+
+magick -size 4096x4096 canvas:black "${SCRATCH_DIR}/black.png"
+ffmpeg -y -loop 1 -i "${SCRATCH_DIR}/black.png" -t ${TOTAL_LEN} -r 30 -c:v libx265 -x265-params crf=20 -pix_fmt yuv420p -tag:v hvc1 "${SCRATCH_DIR}/black.mp4"
 
 echo "file ${SCRATCH_DIR}/white-circle.mp4" > ${SCRATCH_DIR}/mask-videos.txt
 echo "file ${SCRATCH_DIR}/white.mp4" >> ${SCRATCH_DIR}/mask-videos.txt
 echo "file ${SCRATCH_DIR}/black-circle.mp4" >> ${SCRATCH_DIR}/mask-videos.txt
 
-ffmpeg -f concat -safe 0 -i ${SCRATCH_DIR}/mask-videos.txt -c copy mask.mp4
+ffmpeg -y -f concat -safe 0 -i "${SCRATCH_DIR}/mask-videos.txt" -c copy "${OUTFILE}"

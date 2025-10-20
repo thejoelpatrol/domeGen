@@ -34,7 +34,7 @@ def add_captions(caption1: str, caption2: str, infile: str, outfile: str, scratc
     tmp_file = os.path.join(scratch_dir, "linear-captions.mp4")
     tmp_file2 = os.path.join(scratch_dir, "dome-captions.mp4")
 
-    ffmpeg_args = f"ffmpeg -framerate 30 -y -i pipe:0 -y -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {tmp_file}"
+    ffmpeg_args = f"ffmpeg -framerate 30 -y -i pipe:0 -y -c:v libx265 -x265-params crf=20 -pix_fmt yuv420p -tag:v hvc1 {tmp_file}"
     ffmpeg = subprocess.Popen(ffmpeg_args.split(), stdin=subprocess.PIPE)
     with ThreadPoolExecutor(max_workers=n_threads) as thread_pool:
         i = 0
@@ -58,7 +58,7 @@ def add_captions(caption1: str, caption2: str, infile: str, outfile: str, scratc
     #ffmpeg.send_signal(signal.SIGINT)
     ffmpeg.wait()
 
-    ffmpeg_args = f"ffmpeg -i {tmp_file} -y -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -c:v libx264 -r 30 -crf 18 -pix_fmt yuv420p {tmp_file2}"
+    ffmpeg_args = f"ffmpeg -i {tmp_file} -y -lavfi format=pix_fmts=rgb24,v360=input=equirect:output=fisheye:h_fov=180:v_fov=180:pitch=90 -c:v libx265 -x265-params crf=20 -pix_fmt yuv420p -tag:v hvc1 {tmp_file2}"
     print(ffmpeg_args)
     subprocess.check_call(ffmpeg_args.split())
 
