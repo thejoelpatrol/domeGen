@@ -56,7 +56,10 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
         vips_cmd = f"vips crop  {tmp_tif} {quarter}  {offset_x} {offset_y} 2048 2048"
         subprocess.check_call(vips_cmd.split())
 
-    # skew top two qudrants
+    # skew top two quadrants so the seams overlap
+    # imagemagick args:
+    # -shave 1x1: because the distortion adds an extra pixel on every side for some reason
+    # -channel A -threshold 0 +channel: because the distortion makes the lowest row of pixels partly transparent for some reason
     q1 = os.path.join(new_dir, f"q1.tif")
     q1_skew = os.path.join(new_dir, f"q1_distort.tif")
     q1_args = [magick_convert, q1, "-virtual-pixel", "transparent", "+distort", "Perspective",  "0,0,0,0 \n2047,0,2247,0 \n 0,2047,0,2047 \n2047,2047,2047,2047", "-shave", "1x1", "-channel", "A", "-threshold", "0", "+channel", q1_skew]
@@ -71,6 +74,7 @@ def process_frame(p6: bytes, dimensions: bytes, maxval: bytes, data: bytes, tmp_
     if enblend:
         # this "worked" in the sense that it used enblend to automatically blend the seam, and each frame looked good!
         # it did not "work" in the sense that even with the same control points on every frame, they didn't blend the same between frames, so it was flickering horribly
+        # so, I wouldn't use this, but it was a cool experiment
         pto_file = os.path.join(new_dir, "project.pto")
         shutil.copyfile("project.pto", pto_file)
         hugin_cmd = f"hugin_executor --stitching --prefix {os.path.join(new_dir, 'blended')} {pto_file}"
