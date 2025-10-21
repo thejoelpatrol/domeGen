@@ -10,8 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 THREADS = 4
 TEXT_FILE = "/tmp/video_files.txt"
 VERT_PIXELS=1250
-PIXEL_INCREMENT=2
-PAUSE_FRAMES=360
+PIXEL_INCREMENT=3
+PAUSE_FRAMES=450
 
 def gen_caption_frame(caption1: str, caption2: str, i: int, scratch_dir: str) -> bytes:
     y = 10 + i
